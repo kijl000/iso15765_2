@@ -1,6 +1,18 @@
 #include "proIso15765_2.h"
 #define MAX_BUFFER_SIZE 4294967295
 
+proIso15765_2::proIso15765_2()
+{
+	m_linkConfirm = NULL;
+	m_linkRequest = NULL;
+	m_linkIndication = NULL;
+	m_threadRun = false;
+}
+
+proIso15765_2::~proIso15765_2()
+{
+}
+
 //1. Judge frame type and format to single or multi frame.
 //2. Transfer single frame or multiframe
 //3. Add result EventList;
@@ -29,7 +41,7 @@ u32 proIso15765_2::firstFrameIndication(u8* srcAddr, u8* tgtAddr, bool* hasExtAd
 {
 	u32 ret = 0;
 	
-	for (std::unordered_map<ADDR_INFO, PDU>::iterator it = m_recvMap.begin(); it != m_recvMap.end(); ++it)
+	for (std::unordered_map<ADDR_INFO, PDU>::const_iterator it = m_recvMap.begin(); it != m_recvMap.end(); ++it)
 	{
 		PDU pdu = it->second;
 		if (pdu.procolCtrlInfo==PROTOCOL_CONTROL_INFO::firstFrame)
@@ -50,6 +62,7 @@ u32 proIso15765_2::firstFrameIndication(u8* srcAddr, u8* tgtAddr, bool* hasExtAd
 
 proIso15765_2::RESULT proIso15765_2::indication(u8* srcAddr, u8* tgtAddr, bool* hasExtAddr, u8* extAddr, u8* recvBuf, u32* recvLen)
 {
+	
 	for (auto it = m_recvMap.begin(); it != m_recvMap.end(); ++it)
 	{
 		auto addrInfo = it->first;
@@ -66,12 +79,12 @@ proIso15765_2::RESULT proIso15765_2::indication(u8* srcAddr, u8* tgtAddr, bool* 
 
 proIso15765_2::RESULT proIso15765_2::confirm(u8 srcAddr, u8 tgtAddr, bool hasExtAddr, u8 extAddr)
 {
-	auto it = m_eventMap.find(ADDR_INFO(srcAddr,tgtAddr,hasExtAddr,extAddr));
-	if (it!= m_eventMap.end())
+	ADDR_INFO adinfo = ADDR_INFO(srcAddr, tgtAddr, hasExtAddr, extAddr);
+	std::unordered_map<ADDR_INFO, RESULT>::const_iterator got = m_eventMap.find(adinfo);
+	if (got!=m_eventMap.end())
 	{
-		 return it->second;
+		return got->second;
 	}
-	
 	return RESULT::error;
 }
 
@@ -80,13 +93,13 @@ void proIso15765_2::changeParameterRequest(u8 srcAddr, u8 tgtAddr, bool hasExtAd
 	RESULT_CHANGE_PARAM result = RESULT_CHANGE_PARAM::defaultValue;
 	if (type != stMin && type != blockSize) result = RESULT_CHANGE_PARAM::wrongParam;
 	ADDR_INFO addrInfo = ADDR_INFO(srcAddr, tgtAddr, hasExtAddr, extAddr);
-	PARAM param(addrInfo, type, value, result);
-	m_paramMap[addrInfo] = param;
+	PARAM param(type, value, result);
+	m_paramMap.insert(std::make_pair(addrInfo, param));
 }
 
 proIso15765_2::RESULT_CHANGE_PARAM proIso15765_2::changeParameterConfirm(u8 srcAddr, u8 tgtAddr, bool hasExtAddr, u8 extAddr, PARAM_TYPE param)
 {
-	std::unordered_map<ADDR_INFO, PARAM>::iterator it = m_paramMap.find(ADDR_INFO(srcAddr, tgtAddr, hasExtAddr, extAddr));
+	std::unordered_map<ADDR_INFO, PARAM>::const_iterator it = m_paramMap.find(ADDR_INFO(srcAddr, tgtAddr, hasExtAddr, extAddr));
 	if (it!= m_paramMap.end())
 		return it->second.res;
 	return RESULT_CHANGE_PARAM::defaultValue;
@@ -98,20 +111,26 @@ void proIso15765_2::setCanID(u8 srcAddr, u8 tgtAddr, bool hasExtAddr, u8 extAddr
 
 }
 
+void proIso15765_2::setLinkLayer(LinkRequest* pReq, LinkConfirm* pCon, LinkIndication* pInd)
+{
+	m_linkRequest = pReq;
+	m_linkConfirm = pCon;
+	m_linkIndication = pInd;
+}
+
 //Single frame 
 bool proIso15765_2::transferUnsegmentData()
 {
 	//Call 11898_1 to transfer cmd data;
-	for (std::list<PDU>::iterator it = m_requestDataList.begin;it!= m_requestDataList.end(); ++it)
+	for (std::list<PDU>::iterator it = m_requestDataList.begin();it!= m_requestDataList.end(); ++it)
 	{
-		if (m_11898_1 == NULL)
+		if (m_linkRequest == NULL)
 			return false;
 
 		PDU pdu = *it;
-		CAN_ADDR_INFO canAddrInfo = m_canIDList[pdu.addrInfo];
 		u8* buf = new u8[pdu.dataList.size()];
-
-		return (m_11898_1->*ptRequest)(canAddrInfo.canID, canAddrInfo.formatType, canAddrInfo.getDataLenCode(pdu.dataList.size()), pdu.getBuf(buf));
+		CAN_ADDR_INFO canAddrInfo = m_canIDList.at(pdu.addrInfo);
+		return (*m_linkRequest)(canAddrInfo.canID, canAddrInfo.formatType, canAddrInfo.getDataLenCode(pdu.dataList.size()), pdu.getBuf(buf));
 	}
 	return false;
 }
@@ -138,5 +157,13 @@ void proIso15765_2::threadWrok()
 	}
 	
 	processRecv();
+}
+
+void proIso15765_2::processSend()
+{
+}
+
+void proIso15765_2::processRecv()
+{
 }
 

@@ -2,24 +2,67 @@
 #include <vector>
 #include <list>
 #include <unordered_map>
+#include <map>
 #include <thread>
+#include <functional>
 #define u32 unsigned int
 #define u16 unsigned short
 #define u8 unsigned char
+#include <type_traits>
 
-class proIso11898_1;
-//The service primitive requests transmission of <Data> that shall be mapped within specific attributes
-//of the data link protocol data unit selected by means of <Identifier>.
-//The <Identifier> shall provide reference to the specific addressing format used to transmit <Data>:
-bool (proIso11898_1::* ptRequest)(u32 canID, u8 frameFormatType, u8 dataLenCode, u8* data) = NULL;
+using LinkRequest = std::add_pointer<bool(u32 canID, u8 frameFormatType, u8 dataLenCode, u8* data)>::type;
+using LinkConfirm = std::add_pointer<bool(u32 canID, u8 transStatus)>::type;
+using LinkIndication = std::add_pointer<bool(u32* canID, u8* frameFormatType, u8* dataLenCode, u8* data) >::type;
 
-//The service primitive confirms the completion of an L_Data.request service for a specific <Identifier>.
-void (proIso11898_1::* ptConfirm)(u32 canID, u8 transStatus) = NULL;
+typedef struct ADDR_INFO
+{
+	u8 srcAddr;
+	u8 tgtAddr;
+	bool withExt;
+	u8 extAddr;
 
-//The service primitive indicates a data link layer event to the adjacent upper layer and delivers <Data>
-//identified by <Identifier> :
-u32(proIso11898_1::* ptIndication)(u32* canID, u8* frameFormatType, u8* dataLenCode, u8* data) = NULL;
+public:
+	ADDR_INFO() {
+		srcAddr = 0;
+		tgtAddr = 0;
+		withExt = false;
+		extAddr = 0;
+	};
 
+	ADDR_INFO(u8 src, u8 tgt, bool _withExt, u8 _extAddr) {
+		srcAddr = src;
+		tgtAddr = tgt;
+		withExt = _withExt;
+		extAddr = _extAddr;
+	};
+
+	bool operator==(const ADDR_INFO& other) const
+	{
+		return (srcAddr == other.srcAddr
+			&& tgtAddr == other.tgtAddr
+			&& withExt == other.withExt
+			&& extAddr == other.extAddr);
+	}
+}_ADDR_INFO;
+
+namespace std{
+	template <>
+	struct hash<ADDR_INFO>
+	{
+		size_t operator()(const ADDR_INFO& p)const
+		{
+			return (std::hash<u8>()(p.srcAddr)) ^ (std::hash<u8>()(p.tgtAddr)) ^ (std::hash<u8>()(p.extAddr));
+		}
+	};
+}
+
+class addHashFunc {
+public:
+	size_t operator()(const ADDR_INFO& p)const
+	{
+		return (std::hash<u8>()(p.srcAddr)) ^ (std::hash<u8>()(p.tgtAddr)) ^ (std::hash<u8>()(p.extAddr));
+	}
+};
 class proIso15765_2
 {
 public:
@@ -113,6 +156,9 @@ public:
 	}RESULT_CHANGE_PARAM;
 
 public:
+
+	proIso15765_2();
+	~proIso15765_2();
 	//7.2 Services provided by network layer to higher layers
 	//a) Communication services:
 
@@ -145,7 +191,7 @@ public:
 public:
 	void setCanID(u8 srcAddr, u8 tgtAddr, bool hasExtAddr, u8 extAddr, u32 canID, bool is11bit, bool isCanFD);
 
-	void set11898Protocol(proIso11898_1* pPro11898) { m_11898_1 = pPro11898; }
+	void setLinkLayer(LinkRequest* pReq, LinkConfirm* pCon, LinkIndication* pInd);
 	
 private:
 	//9 Transport layer protocol
@@ -164,33 +210,6 @@ private:
 
 	} PROTOCOL_CONTROL_INFO;
 
-
-	typedef struct _DATA_ADDR
-	{
-		u8 srcAddr;
-		u8 tgtAddr;
-		bool withExt;
-		u8 extAddr;
-		
-	public:
-		_DATA_ADDR() {
-			srcAddr = 0;
-			tgtAddr = 0;
-			withExt = false;
-			extAddr = 0;
-		
-		};
-		_DATA_ADDR(u8 src, u8 tgt, bool _withExt, u8 _extAddr) {
-			srcAddr = src;
-			tgtAddr = tgt;
-			withExt = _withExt;
-			extAddr = _extAddr;
-		
-
-		};
-
-	}ADDR_INFO;
-
 	typedef struct
 	{
 		ADDR_INFO addrInfo;
@@ -206,13 +225,12 @@ private:
 
 	typedef struct  _PARAM
 	{
-		ADDR_INFO addrInfo;
 		PARAM_TYPE type;
 		u8 value;
 		RESULT_CHANGE_PARAM res;
 	public :
-		_PARAM() { addrInfo = ADDR_INFO(); type = PARAM_TYPE::defaultValue; value = 0; res = RESULT_CHANGE_PARAM::defaultValue; };
-		_PARAM(ADDR_INFO addrInfo, PARAM_TYPE _type, u8 _value, RESULT_CHANGE_PARAM result) { addrInfo = addrInfo; type = _type; value = _value; res = result; };
+		_PARAM() { type = PARAM_TYPE::defaultValue; value = 0; res = RESULT_CHANGE_PARAM::defaultValue; };
+		_PARAM( PARAM_TYPE _type, u8 _value, RESULT_CHANGE_PARAM result) {  type = _type; value = _value; res = result; };
 	}PARAM;
 
 	typedef struct _CAN_ID
@@ -246,31 +264,13 @@ private:
 			return 0;
 		};
 	}CAN_ADDR_INFO;
-private:
-
-	//7.3 Internal operation of network layer
-	bool transferUnsegmentData();
-
-	//Multi frame request;
-	bool transferSegmentData();
-
-	void addEvent(RESULT result, ADDR_INFO addrInfo) { m_eventMap[addrInfo] = result; };
-
-	//Pack raw data to pdu
-	bool packData(ADDR_INFO info, u8* buf, u32 len, PDU* pdu);
-
-	void threadWrok();
-
-	void processSend();
-
-	void processRecv();
 
 private:
 
 	std::unordered_map<ADDR_INFO, RESULT> m_eventMap;
 
 	//The request data list waiting tobe transfered to the CANBUS
-	std::list<PDU> m_requestDataList;
+    std::list<PDU> m_requestDataList;
 
 	//The recv data map waiting to be transfered to the upper level
 	std::unordered_map<ADDR_INFO, PDU> m_recvMap;
@@ -288,9 +288,35 @@ private:
 	//<addrInfoHashCode, CANID>
 	std::unordered_map<ADDR_INFO, CAN_ADDR_INFO> m_canIDList;
 
-	proIso11898_1* m_11898_1;
+	//link_layer::proIso11898_1* m_11898_1;
+	LinkConfirm* m_linkConfirm;
+	LinkRequest* m_linkRequest;
+	LinkIndication* m_linkIndication;
 
 	bool m_threadRun;
+
+private:
+
+	//7.3 Internal operation of network layer
+	bool transferUnsegmentData();
+
+	//Multi frame request;
+	bool transferSegmentData();
+
+	void addEvent(RESULT result, ADDR_INFO addrInfo) {
+		// m_eventMap[addrInfo] = result; 
+	};
+
+	//Pack raw data to pdu
+	bool packData(ADDR_INFO info, u8* buf, u32 len, PDU* pdu);
+
+	void threadWrok();
+
+	void processSend();
+
+	void processRecv();
+
+
 
 };
 
